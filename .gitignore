@@ -1,0 +1,35 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Logs e temporanei
+*.log
+*.tmp
+*.bak
+
+# Reports (output dinamici)
+reports/
+!reports/.gitkeep
+
+# Configurazioni locali / chiavi API
+config.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE e editor files
+.vscode/
+.idea/
+*.swp
+*.swo

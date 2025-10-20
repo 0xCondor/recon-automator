@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+config.json
+recon.log
+.env
+venv/
+

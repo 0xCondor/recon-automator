@@ -1,0 +1,6 @@
+requests
+colorama
+dnspython
+graphviz
+python-whois
+selenium
