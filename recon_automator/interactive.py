@@ -8,10 +8,11 @@ import itertools
 import threading
 from datetime import datetime
 from dotenv import load_dotenv
+# Importiamo Groq/NetworkX/Matplotlib e Style
 from groq import Groq
 import networkx as nx
 import matplotlib.pyplot as plt
-from colorama import Fore, Style # Assicurati che Style sia importato
+from colorama import Fore, Style 
 
 # importi relativi al package
 from .core import run_scan
@@ -23,9 +24,10 @@ from .report import (
 )
 from .utils import load_config, save_config, info, warn, err
 
-# Inizializza .env e Groq (per l'analisi AI)
+# Inizializza .env
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# Leggiamo la chiave una sola volta all'avvio
+GROQ_API_KEY = os.getenv("GROQ_API_KEY") 
 
 # --- PLACEHOLDER PER FUNZIONI ESTERNE (AI e Grafico consolidate) ---
 
@@ -42,15 +44,14 @@ def generate_graph_networkx(target_ip, subdomains, open_ports):
         # Nodo Target (IP)
         G.add_node(target_ip, label=target_ip, color='red', size=2000)
         
-        # Nodifica Subdomains (Conversione a stringa per evitare crash da dict)
+        # FIX: Garantire che i nodi siano stringhe (tipo hashable)
         for sub in subdomains:
-            sub_id = str(sub) # <<< FIX APPLICATO QUI: Forziamo la stringa
+            sub_id = str(sub) 
             G.add_node(sub_id, label=sub_id, color='skyblue', size=1000)
             G.add_edge(target_ip, sub_id)
-        
-        # Nodifica Porte (Conversione a stringa per evitare crash)
+            
         for port in open_ports:
-            port_label = f"Port {str(port)}" # <<< FIX APPLICATO QUI: Forziamo la stringa
+            port_label = f"Port {str(port)}"
             G.add_node(port_label, label=port_label, color='lightgreen', size=800)
             G.add_edge(target_ip, port_label)
 
@@ -83,15 +84,16 @@ def generate_graph_networkx(target_ip, subdomains, open_ports):
         err(f"Impossibile generare recon graph (NetworkX): {e}")
         return None
 
-def analyze_with_ai(scan_data):
+def analyze_with_ai(scan_data, groq_api_key):
     """Chiede a Llama 3 di analizzare i risultati della scansione."""
-    if not GROQ_API_KEY:
+    if not groq_api_key:
         warn("[!] API Key Groq mancante. Analisi AI saltata.")
-        return None
+        return "Analisi AI non eseguita: API Key mancante."
 
     try:
         print(Fore.MAGENTA + "\n[🤖] Avvio Analisi AI (Llama 3)...")
-        client = Groq(api_key=GROQ_API_KEY)
+        # Usa la chiave passata
+        client = Groq(api_key=groq_api_key) 
         
         target = scan_data.get('target', 'Unknown')
         ports = scan_data.get('open_ports', [])
@@ -114,9 +116,9 @@ def analyze_with_ai(scan_data):
         return report
     except Exception as e:
         err(f"[ERR] Errore API/AI: {e}")
-        return None
+        return "Errore durante l'analisi AI."
 # ─────────────────────────────────────────────────────────────
-# Banner personalizzato — modificabile se vuoi
+# NUOVO BANNER ELEGANTE
 BANNER = Fore.RED + Style.BRIGHT + r"""
                        █████                                        █████                      
                       ░░███                                        ░░███                       
@@ -180,18 +182,26 @@ def show_menu():
 
 # ─────────────────────────────────────────────────────────────
 def configure_apis(api_keys):
+    # La chiave Groq è gestita dal file .env, questa funzione gestisce le altre
+    global GROQ_API_KEY
     clear_screen()
     print("== Configurazione API Keys (lascia vuoto per non modificare) ==")
     print("Le API sono opzionali: il tool funziona anche senza di esse.\n")
     print(f"VirusTotal: {'✅' if api_keys.get('vt') else '—'}")
     print(f"AbuseIPDB : {'✅' if api_keys.get('abuse') else '—'}")
     print(f"HIBP      : {'✅' if api_keys.get('hibp') else '—'}")
-    print(f"Groq/AI   : {'✅' if GROQ_API_KEY else '—'} (Gestito tramite file .env)\n")
+    
+    # La chiave Groq non può essere modificata qui, ma solo nel file .env o al momento della scansione
+    ai_status = "✅ Configurato (.env)" if GROQ_API_KEY else "— Non configurato (.env)"
+    print(f"Groq/AI   : {ai_status}")
 
+    # ... (logica per altre chiavi API, omessa per brevità) ...
+    
+    # Esempio:
     vt = input("VirusTotal API Key: ").strip()
     abuse = input("AbuseIPDB API Key: ").strip()
     hibp = input("HaveIBeenPwned API Key: ").strip()
-
+    
     if vt:
         api_keys["vt"] = vt
     if abuse:
@@ -199,13 +209,13 @@ def configure_apis(api_keys):
     if hibp:
         api_keys["hibp"] = hibp
 
-    # Ho rimosso l'import di save_config perché non l'hai fornita, assumo sia importata da .utils
-    # save_config(api_keys)
+    save_config(api_keys)
     info("API keys salvate localmente (file config.json).")
     pause()
     return api_keys
 
 def show_api_status(api_keys):
+    global GROQ_API_KEY
     clear_screen()
     print("== API Keys attualmente configurate ==")
     print(f"VirusTotal: {'Configurata' if api_keys.get('vt') else 'Non configurata'}")
@@ -217,6 +227,7 @@ def show_api_status(api_keys):
     pause()
 
 # ─────────────────────────────────────────────────────────────
+# ... (choose_nmap_profile) ...
 def choose_nmap_profile():
     """Chiede all'utente quale profilo nmap utilizzare."""
     print("\nScegli profilo nmap:")
@@ -234,12 +245,13 @@ def choose_nmap_profile():
             warn("Profilo invasivo rifiutato — uso 'safe'.")
             return "safe"
     return profile
+# ─────────────────────────────────────────────────────────────
 
 def run_scan_interactive(api_keys):
     """
     Esegue la scansione interattiva, ora integrando Grafico e AI.
     """
-    global last_report
+    global last_report, GROQ_API_KEY # Dichiara GROQ_API_KEY come globale per modificarla
     clear_screen()
     print("== Avvia scansione ==")
     target = input("Inserisci dominio o IP: ").strip()
@@ -252,7 +264,7 @@ def run_scan_interactive(api_keys):
     info(f"Avvio scansione per {target} con profilo '{profile}'.")
 
     # ─────────────────────────────────────────────
-    # Barra di caricamento simulata
+    # ... (loading animation logic)
     def loading_animation(message: str, duration: int, stop_flag):
         spinner = itertools.cycle(["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"])
         start = time.time()
@@ -266,11 +278,9 @@ def run_scan_interactive(api_keys):
     duration_map = {"safe": 3, "service": 6, "vuln": 10, "udp": 8}
     duration = duration_map.get(profile, 3)
 
-    # Simula il tempo di esecuzione
     loader_thread = threading.Thread(target=loading_animation, args=("Scanning in corso...", duration, stop_flag))
     loader_thread.start()
     
-    # ESECUZIONE REALE: Qui viene chiamato il tuo modulo core.py
     report = run_scan(target, api_keys, nmap_profile=profile)
     
     stop_flag.set() # Ferma l'animazione
@@ -284,8 +294,24 @@ def run_scan_interactive(api_keys):
 
     last_report = report
     
-    # Aggiungi l'analisi AI
-    report['ai_analysis'] = analyze_with_ai(report)
+    # --- NUOVA LOGICA DI RICHIESTA CHIAVE API GROQ ---
+    key_to_use = GROQ_API_KEY
+    if not key_to_use:
+        warn("\n[!] Chiave API Groq non trovata per l'Analisi AI.")
+        ans = input("Vuoi inserire la chiave API Groq *solo per questa sessione*? (y/N): ").strip().lower()
+        if ans == 'y':
+            temp_key = input(Fore.YELLOW + "Inserisci Groq API Key (gsk_...): " + Style.RESET_ALL).strip()
+            if temp_key:
+                key_to_use = temp_key
+                # Aggiorna la variabile globale per la sessione corrente
+                GROQ_API_KEY = temp_key
+            else:
+                warn("Chiave non inserita. Analisi AI saltata.")
+        else:
+            warn("Analisi AI saltata per mancanza di chiave.")
+    
+    # Aggiungi l'analisi AI (Passiamo la chiave API locale)
+    report['ai_analysis'] = analyze_with_ai(report, key_to_use) 
     
     # Stampa report e appendi alla history
     print_report(report)
@@ -295,7 +321,6 @@ def run_scan_interactive(api_keys):
     ports = report.get('open_ports', [])
     subs = report.get('subdomains', [])
     
-    # Solo se ci sono dati per il grafico (altrimenti NetworkX crasha)
     if ports or subs:
         report['graph_path'] = generate_graph_networkx(target_ip, subs, ports)
     else:
@@ -313,9 +338,7 @@ def run_scan_interactive(api_keys):
 
 
 def export_last_report_interactive():
-    """
-    Esporta l'ultimo report in JSON e Markdown.
-    """
+    # ... (funzione omessa per brevità) ...
     global last_report
     if not last_report:
         warn("Nessun report disponibile da esportare.")
@@ -341,16 +364,14 @@ def export_last_report_interactive():
 
 # ─────────────────────────────────────────────────────────────
 def main_loop():
-    # Ho rimosso l'import di load_config perché non l'hai fornita, assumo sia importata da .utils
+    # ... (funzione omessa per brevità) ...
     api_keys = load_config() or {} 
     show_banner_and_disclaimer()
 
     while True:
         choice = show_menu()
         if choice == "1":
-            # Per questa demo, dobbiamo assicurarci che NetworkX sia pronto
             try:
-                # Eseguiamo il check dei moduli qui, altrimenti il caricamento è lento
                 import networkx as nx
                 import matplotlib.pyplot as plt
                 run_scan_interactive(api_keys)
@@ -380,7 +401,6 @@ def main_loop():
 
 if __name__ == "__main__":
     try:
-        # Ho avvolto l'intera esecuzione in un loop per la modalità interattiva
         main_loop() 
     except KeyboardInterrupt:
         print(Fore.RED + "\nInterrotto da utente. Uscita.")
