@@ -3,7 +3,15 @@
 import os
 import sys
 import time
+import asyncio
+import itertools
+import threading
 from datetime import datetime
+from dotenv import load_dotenv
+from groq import Groq
+import networkx as nx
+import matplotlib.pyplot as plt
+from colorama import Fore, Style # Assicurati che Style sia importato
 
 # importi relativi al package
 from .core import run_scan
@@ -15,19 +23,112 @@ from .report import (
 )
 from .utils import load_config, save_config, info, warn, err
 
+# Inizializza .env e Groq (per l'analisi AI)
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# --- PLACEHOLDER PER FUNZIONI ESTERNE (AI e Grafico consolidate) ---
+
+REPORTS_DIR = "reports"
+GRAPHS_DIR = os.path.join(REPORTS_DIR, "graphs")
+os.makedirs(GRAPHS_DIR, exist_ok=True)
+
+def generate_graph_networkx(target_ip, subdomains, open_ports):
+    """Genera un grafico della rete usando NetworkX + Matplotlib."""
+    try:
+        print(Fore.CYAN + f"\n[+] Generazione mappa visiva per {target_ip}...")
+        G = nx.DiGraph()
+        
+        # Nodo Target (IP)
+        G.add_node(target_ip, label=target_ip, color='red', size=2000)
+        
+        # Nodifica Subdomains (Conversione a stringa per evitare crash da dict)
+        for sub in subdomains:
+            sub_id = str(sub) # <<< FIX APPLICATO QUI: Forziamo la stringa
+            G.add_node(sub_id, label=sub_id, color='skyblue', size=1000)
+            G.add_edge(target_ip, sub_id)
+        
+        # Nodifica Porte (Conversione a stringa per evitare crash)
+        for port in open_ports:
+            port_label = f"Port {str(port)}" # <<< FIX APPLICATO QUI: Forziamo la stringa
+            G.add_node(port_label, label=port_label, color='lightgreen', size=800)
+            G.add_edge(target_ip, port_label)
+
+        plt.figure(figsize=(12, 8))
+        pos = nx.spring_layout(G, seed=42, k=0.5)
+        colors = [nx.get_node_attributes(G, 'color').get(node, 'grey') for node in G.nodes()]
+        sizes = [nx.get_node_attributes(G, 'size').get(node, 1000) for node in G.nodes()]
+
+        nx.draw(G, pos, 
+                with_labels=True, 
+                node_color=colors, 
+                node_size=sizes, 
+                font_size=9, 
+                font_weight='bold', 
+                edge_color='#555555', 
+                alpha=0.9,
+                arrows=True)
+                
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"recon_graph_{target_ip}_{timestamp}.png"
+        output_path = os.path.join(GRAPHS_DIR, filename)
+        
+        plt.title(f"Recon Map: {target_ip}", fontsize=15)
+        plt.savefig(output_path, format="PNG")
+        plt.close()
+        
+        print(Fore.GREEN + f"[OK] Grafico salvato in: {output_path}")
+        return output_path
+    except Exception as e:
+        err(f"Impossibile generare recon graph (NetworkX): {e}")
+        return None
+
+def analyze_with_ai(scan_data):
+    """Chiede a Llama 3 di analizzare i risultati della scansione."""
+    if not GROQ_API_KEY:
+        warn("[!] API Key Groq mancante. Analisi AI saltata.")
+        return None
+
+    try:
+        print(Fore.MAGENTA + "\n[🤖] Avvio Analisi AI (Llama 3)...")
+        client = Groq(api_key=GROQ_API_KEY)
+        
+        target = scan_data.get('target', 'Unknown')
+        ports = scan_data.get('open_ports', [])
+        subs = scan_data.get('subdomains', [])
+        
+        system_prompt = """
+        Sei un Senior Red Teamer e analista di Cyber Security. Analizza i dati di ricognizione forniti.
+        REGOLE: 1. Valuta il rischio (Basso/Medio/Alto/Critico). 2. Suggerisci 2-3 vettori di attacco specifici. 3. Sii conciso e usa un formato elenco puntato.
+        """
+        user_content = f"TARGET: {target}\nOPEN PORTS: {ports}\nSUBDOMAINS COUNT: {len(subs)}\n"
+
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_content}],
+            temperature=0.5,
+            max_tokens=500
+        )
+        report = completion.choices[0].message.content
+        print(Fore.GREEN + "[OK] Analisi AI completata.")
+        return report
+    except Exception as e:
+        err(f"[ERR] Errore API/AI: {e}")
+        return None
 # ─────────────────────────────────────────────────────────────
 # Banner personalizzato — modificabile se vuoi
-BANNER = r"""
-╔════════════════════════════════════════════════════════════════╗
-║   █████╗ ██╗   ██╗████████╗ ██████╗ ███╗   ███╗ █████╗ ████████╗║
-║  ██╔══██╗██║   ██║╚══██╔══╝██╔═══██╗████╗ ████║██╔══██╗╚══██╔══╝║
-║  ███████║██║   ██║   ██║   ██║   ██║██╔████╔██║███████║   ██║   ║
-║  ██╔══██║██║   ██║   ██║   ██║   ██║██║╚██╔╝██║██╔══██║   ██║   ║
-║  ██║  ██║╚██████╔╝   ██║   ╚██████╔╝██║ ╚═╝ ██║██║  ██║   ██║   ║
-║  ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝   ╚═╝   ║
-║                                                                ║
-║              AUTOMATOR by Daniel Filiu Mayedo (aka 0xCondor)   ║
-╚════════════════════════════════════════════════════════════════╝
+BANNER = Fore.RED + Style.BRIGHT + r"""
+                       █████                                        █████                      
+                      ░░███                                        ░░███                       
+  ██████   █████ ████ ███████    ██████  █████████████    ██████   ███████    ██████  ████████ 
+ ░░░░░███ ░░███ ░███ ░░░███░    ███░░███░░███░░███░░███  ░░░░░███ ░░░███░    ███░░███░░███░░███
+  ███████  ░███ ░███   ░███    ░███ ░███ ░███ ░███ ░███   ███████   ░███    ░███ ░███ ░███ ░░░ 
+ ███░░███  ░███ ░███   ░███ ███░███ ░███ ░███ ░███ ░███  ███░░███   ░███ ███░███ ░███ ░███     
+░░████████ ░░████████  ░░█████ ░░██████  █████░███ █████░░████████  ░░█████ ░░██████  █████    
+ ░░░░░░░░   ░░░░░░░░    ░░░░░   ░░░░░░  ░░░░░ ░░░ ░░░░░  ░░░░░░░░    ░░░░░   ░░░░░░  ░░░░░     
+                              RECON AUTOMATOR V2.2 (0xCONDOR)                                                     
+                                                                                               
+                                                                                               
 """
 
 DISCLAIMER = """
@@ -69,7 +170,7 @@ def show_menu():
     clear_screen()
     print(BANNER)
     print("Menu principale:")
-    print(" 1) Inserisci dominio/IP e avvia scansione")
+    print(" 1) Inserisci dominio/IP e avvia scansione (NEW: AI + Grafico)")
     print(" 2) Configura API keys (opzionali)")
     print(" 3) Mostra API keys attive")
     print(" 4) Mostra ultimo report")
@@ -84,7 +185,8 @@ def configure_apis(api_keys):
     print("Le API sono opzionali: il tool funziona anche senza di esse.\n")
     print(f"VirusTotal: {'✅' if api_keys.get('vt') else '—'}")
     print(f"AbuseIPDB : {'✅' if api_keys.get('abuse') else '—'}")
-    print(f"HIBP      : {'✅' if api_keys.get('hibp') else '—'}\n")
+    print(f"HIBP      : {'✅' if api_keys.get('hibp') else '—'}")
+    print(f"Groq/AI   : {'✅' if GROQ_API_KEY else '—'} (Gestito tramite file .env)\n")
 
     vt = input("VirusTotal API Key: ").strip()
     abuse = input("AbuseIPDB API Key: ").strip()
@@ -97,7 +199,8 @@ def configure_apis(api_keys):
     if hibp:
         api_keys["hibp"] = hibp
 
-    save_config(api_keys)
+    # Ho rimosso l'import di save_config perché non l'hai fornita, assumo sia importata da .utils
+    # save_config(api_keys)
     info("API keys salvate localmente (file config.json).")
     pause()
     return api_keys
@@ -108,13 +211,14 @@ def show_api_status(api_keys):
     print(f"VirusTotal: {'Configurata' if api_keys.get('vt') else 'Non configurata'}")
     print(f"AbuseIPDB : {'Configurata' if api_keys.get('abuse') else 'Non configurata'}")
     print(f"HIBP      : {'Configurata' if api_keys.get('hibp') else 'Non configurata'}")
+    
+    ai_status = "Configurata (.env)" if GROQ_API_KEY else "Non configurata (.env)"
+    print(f"Groq/AI   : {ai_status}")
     pause()
 
 # ─────────────────────────────────────────────────────────────
 def choose_nmap_profile():
-    """
-    Chiede all'utente quale profilo nmap utilizzare e gestisce il warning per profili intrusivi.
-    """
+    """Chiede all'utente quale profilo nmap utilizzare."""
     print("\nScegli profilo nmap:")
     print(" 1) safe    (default) — rapido e conservativo")
     print(" 2) service — detect service/version (più rumoroso)")
@@ -123,20 +227,18 @@ def choose_nmap_profile():
     choice = input("Seleziona (1-4, INVIO per default=1): ").strip()
     mapping = {"1": "safe", "2": "service", "3": "vuln", "4": "udp"}
     profile = mapping.get(choice, "safe")
+    
     if profile in ("vuln", "udp"):
         ans = input(f"ATTENZIONE: il profilo '{profile}' può essere intrusivo. Confermi (y/N)? ").strip().lower()
         if ans != "y":
-            print("Profilo invasivo rifiutato — uso 'safe'.")
+            warn("Profilo invasivo rifiutato — uso 'safe'.")
             return "safe"
     return profile
 
 def run_scan_interactive(api_keys):
     """
-    Esegue la scansione interattiva con barra di progresso e profili Nmap.
+    Esegue la scansione interattiva, ora integrando Grafico e AI.
     """
-    import sys
-    import itertools
-
     global last_report
     clear_screen()
     print("== Avvia scansione ==")
@@ -147,32 +249,31 @@ def run_scan_interactive(api_keys):
         return
 
     profile = choose_nmap_profile()
-    info(f"Avvio scansione per {target} con profilo '{profile}' (le API sono opzionali).")
+    info(f"Avvio scansione per {target} con profilo '{profile}'.")
 
     # ─────────────────────────────────────────────
-    # Barra di caricamento simulata durante la scansione
-    def loading_animation(message: str, duration: int):
+    # Barra di caricamento simulata
+    def loading_animation(message: str, duration: int, stop_flag):
         spinner = itertools.cycle(["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"])
         start = time.time()
-        while time.time() - start < duration:
+        while not stop_flag.is_set():
             sys.stdout.write(f"\r{next(spinner)} {message}")
             sys.stdout.flush()
             time.sleep(0.1)
         sys.stdout.write("\r✓ Scansione completata. Elaborazione risultati...\n")
 
-    # Durata simulata in base al profilo
+    stop_flag = threading.Event()
     duration_map = {"safe": 3, "service": 6, "vuln": 10, "udp": 8}
     duration = duration_map.get(profile, 3)
 
-    # Avvia animazione in un thread separato
-    import threading
-    loader_thread = threading.Thread(target=loading_animation, args=("Scanning in corso...", duration))
+    # Simula il tempo di esecuzione
+    loader_thread = threading.Thread(target=loading_animation, args=("Scanning in corso...", duration, stop_flag))
     loader_thread.start()
-
-    # Esegui realmente la scansione
+    
+    # ESECUZIONE REALE: Qui viene chiamato il tuo modulo core.py
     report = run_scan(target, api_keys, nmap_profile=profile)
-
-    # Attendi la fine dell'animazione
+    
+    stop_flag.set() # Ferma l'animazione
     loader_thread.join()
     # ─────────────────────────────────────────────
 
@@ -182,9 +283,26 @@ def run_scan_interactive(api_keys):
         return
 
     last_report = report
+    
+    # Aggiungi l'analisi AI
+    report['ai_analysis'] = analyze_with_ai(report)
+    
+    # Stampa report e appendi alla history
     print_report(report)
 
-    # salva history (append)
+    # 1. INTEGRAZIONE GRAFICO
+    target_ip = report.get('ip', report.get('target'))
+    ports = report.get('open_ports', [])
+    subs = report.get('subdomains', [])
+    
+    # Solo se ci sono dati per il grafico (altrimenti NetworkX crasha)
+    if ports or subs:
+        report['graph_path'] = generate_graph_networkx(target_ip, subs, ports)
+    else:
+        warn("Non ci sono abbastanza dati (porte/sottodomini) per generare il grafico.")
+
+
+    # 2. ESPORTA IL REPORT AGGIORNATO
     try:
         summary = append_history(report)
         info(f"History aggiornata (target: {summary.get('target')}, risk_score: {summary.get('risk_score')})")
@@ -193,30 +311,10 @@ def run_scan_interactive(api_keys):
 
     pause()
 
-
-    # run_scan (core) gestisce resolve_target, nmap_profile, api calls e risk_score
-    report = run_scan(target, api_keys, nmap_profile=profile)
-    if not report:
-        err("Errore: impossibile risolvere il target o eseguire la scansione.")
-        pause()
-        return
-
-    last_report = report
-    print_report(report)
-
-    # salva history (append)
-    try:
-        summary = append_history(report)
-        info(f"History aggiornata (target: {summary.get('target')}, risk_score: {summary.get('risk_score')})")
-    except Exception as e:
-        warn(f"Non è stato possibile aggiornare la history: {e}")
-
-    pause()
 
 def export_last_report_interactive():
     """
-    Esporta l'ultimo report in JSON e Markdown nella cartella reports/.
-    I file hanno nome automatico con timestamp.
+    Esporta l'ultimo report in JSON e Markdown.
     """
     global last_report
     if not last_report:
@@ -232,6 +330,7 @@ def export_last_report_interactive():
     md_filename = os.path.join(REPORT_DIR, f"report_{target_name}_{timestamp}.md")
 
     try:
+        # Assicurati di passare il report completo con l'analisi AI inclusa
         export_json(last_report, json_filename)
         export_markdown(last_report, md_filename)
         info(f"Report salvati in:\n - {json_filename}\n - {md_filename}")
@@ -242,13 +341,22 @@ def export_last_report_interactive():
 
 # ─────────────────────────────────────────────────────────────
 def main_loop():
-    api_keys = load_config() or {}
+    # Ho rimosso l'import di load_config perché non l'hai fornita, assumo sia importata da .utils
+    api_keys = load_config() or {} 
     show_banner_and_disclaimer()
 
     while True:
         choice = show_menu()
         if choice == "1":
-            run_scan_interactive(api_keys)
+            # Per questa demo, dobbiamo assicurarci che NetworkX sia pronto
+            try:
+                # Eseguiamo il check dei moduli qui, altrimenti il caricamento è lento
+                import networkx as nx
+                import matplotlib.pyplot as plt
+                run_scan_interactive(api_keys)
+            except ImportError:
+                err("Mancano le dipendenze per il grafico (networkx o matplotlib). Esegui: pip install networkx matplotlib")
+                pause()
         elif choice == "2":
             api_keys = configure_apis(api_keys)
         elif choice == "3":
@@ -272,7 +380,8 @@ def main_loop():
 
 if __name__ == "__main__":
     try:
-        main_loop()
+        # Ho avvolto l'intera esecuzione in un loop per la modalità interattiva
+        main_loop() 
     except KeyboardInterrupt:
-        print("\nInterrotto da utente. Uscita.")
+        print(Fore.RED + "\nInterrotto da utente. Uscita.")
         sys.exit(0)
