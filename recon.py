@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 #!/usr/bin/env python3
 import os
 import sys
@@ -188,7 +187,7 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print(Fore.RED + "\n[!] Uscita forzata.")
-=======
+      
 #!/usr/bin/env python3
 import os
 import sys
@@ -361,4 +360,3 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print(Fore.RED + "\n[!] Uscita forzata.")
->>>>>>> 7d31137e760947d5c6798f57bdccff1cc783d9ac
